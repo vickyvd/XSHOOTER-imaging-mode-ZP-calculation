@@ -1,0 +1,65 @@
+#In this cofiguration file we specify info related to paths, the filter that is going to be use and other parameters.
+
+paths:
+  data: 'data/' #path to the data folder where all frames are stored
+
+header_kwards:
+  filter: 'HIERARCH ESO INS FILT1 NAME'
+  frame: 'OBJECT'
+  gain: 'HIERARCH ESO DET OUT1 GAIN'
+  seeing_start : 'HIERARCH ESO TEL AMBI FWHM START'
+  seeing_end : 'HIERARCH ESO TEL AMBI FWHM END'
+  airmass_start: 'HIERARCH ESO TEL AIRM START'
+  airmass_end: 'HIERARCH ESO TEL AIRM END'
+  exptime: 'EXPTIME'
+
+others:
+  science_frame: 'STD,FLUX'
+  skyff_frame: 'FLAT,SKY'
+  bias_frame: 'BIAS'  
+  pix_scale: 0.1744 #in arcsec/pix
+  readout_noise: 4.54 #in e- (the value from the header is smaller so we hardcode it)
+  dither: 3 #arcsec
+  overscan_x: [27, 536] #x coordinates of the no overscan region (Overscan region: x = 1-26 & 537-562 and y = 1-15 & 527-528)
+  overscan_y: [16, 527] #y coordinates of the no overscan region
+  aper_radius: 8 #number of fwhm
+  iner_annulus_radius: 11 #number of fwhm
+  outer_annulus_radius: 15 #number of fwhm
+  bin_width: 20 #pixel size of bins for histogram of shifts between detected and catalog sources
+  good_dist: 5 #maximum distance in pixels to consider a detected source as a good match to a catalog source
+  detect_thresh: #depends on the filter, it is the threshold for source detection in units of the background std
+    U: 5
+    B: 6
+    V: 16
+    R: 19
+    I: 20
+    u_prime: 5
+    g_prime: 15
+    r_prime: 20
+    i_prime: 28
+    z_prime: 23
+  pivot_wavelength: #in Angstroms. UBVRI were estimated visually and u'g'r'i'z' are from SVO sloan
+    U: 3675
+    B: 4310
+    V: 5150
+    R: 5950
+    I: 7800
+    u_prime: 3501
+    g_prime: 4763
+    r_prime: 6246
+    i_prime: 7718
+    z_prime: 8947
+  lambda_A: [3325, 3375, 3425, 3475, 3525, 3575, 3625, 3675, 3725, 3775, 3825, 3875, 3925, 3975, 4025, 4075, 4125, 4175, 4225, 4275, 4325, 4375, 4425, 4475, 4525, 4575, 4625, 4675, 4725, 4775, 4825, 4875, 4925, 4975, 5025, 5075, 5125, 5175, 5225, 5275, 5325, 5375, 5425, 5475, 5525, 5575, 5625, 5675, 5725, 5775, 5825, 5875, 5925, 5975, 6025, 6075, 6125, 6175, 6225, 6275, 6325, 6375, 6425, 6475, 6525, 6575, 6625, 6675, 6725, 6775, 7060, 7450, 7940, 8500, 8675, 8850, 10000]
+  k_lambda: [0.686, 0.606, 0.581, 0.552, 0.526, 0.504, 0.478, 0.456, 0.430, 0.409, 0.386, 0.378, 0.363, 0.345, 0.330, 0.316, 0.298, 0.285, 0.274, 0.265, 0.253, 0.241, 0.229, 0.221, 0.212, 0.204, 0.198, 0.190, 0.185, 0.182, 0.176, 0.169, 0.162, 0.157, 0.156, 0.153, 0.146, 0.143, 0.141, 0.139, 0.139, 0.134, 0.133, 0.131, 0.129, 0.127, 0.128, 0.130, 0.134, 0.132, 0.124, 0.122, 0.125, 0.122, 0.117, 0.115, 0.108, 0.104, 0.102, 0.099, 0.095, 0.092, 0.085, 0.086, 0.083, 0.081, 0.076, 0.072, 0.068, 0.064, 0.064, 0.048, 0.042, 0.032, 0.030, 0.029, 0.022]
+  color_index:
+    U: ['Umag', 'Bmag']
+    B: ['Bmag', 'Vmag']
+    V: ['Bmag', 'Vmag']
+    R: ['Vmag', 'Rmag']
+    I: ['Rmag', 'Imag']
+    u_prime: ['u_primemag', 'g_primemag']
+    g_prime: ['g_primemag', 'r_primemag']
+    r_prime: ['g_primemag', 'r_primemag']
+    i_prime: ['r_primemag', 'i_primemag']
+    z_prime: ['i_primemag', 'z_primemag']
+
