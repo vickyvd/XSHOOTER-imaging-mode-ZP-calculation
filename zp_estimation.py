@@ -17,12 +17,33 @@ import scipy.optimize as opt
 import yaml
 from scipy.spatial import cKDTree
 from scipy.interpolate import interp1d
+from concurrent.futures import ProcessPoolExecutor, as_completed
+import os
+import time
+
+#to ignore warnings from astropy 
+from astropy import log
+log.setLevel("ERROR")
+
+import warnings
+import numpy as np
+
+# Silence numpy runtime warnings from masked / empty slices
+warnings.filterwarnings(
+    "ignore",
+    category=RuntimeWarning,
+    message="Mean of empty slice"
+)
+
+warnings.filterwarnings(
+    "ignore",
+    category=RuntimeWarning,
+    message="Degrees of freedom <= 0*"
+)
 
 
-def zp_estimation(global_path, filter):
 
-    with open(f'{global_path}config.yaml', 'r') as f:
-        config = yaml.safe_load(f)
+def zp_estimation(global_path, filter, config, cat_stetson):
 
     data_path = f'{config["paths"]["data"]}'
 
@@ -45,20 +66,6 @@ def zp_estimation(global_path, filter):
             bias_paths.append(file)
 
     science_paths.sort() #so we can use as reference wcs the first exposure (center)
-    print('Science frames files:')
-    for file in science_paths:
-        print(file)
-    print('------------------')
-
-    print('Skyff frames files:')
-    for file in skyff_paths:
-        print(file)
-    print('------------------')
-
-    print('Bias frames files:')
-    for file in bias_paths:
-        print(file)
-    print('------------------')
 
     #WE REDUCE THE DATA: we create master bias and master skyff, and we reduce the science frames by subtracting the master bias and dividing by the master skyff.
 
@@ -88,6 +95,8 @@ def zp_estimation(global_path, filter):
     exptime = ref_header[config['header_kwards']['exptime']]
     outlier_thresh = config['others']['outlier_thresh'] #chi threshold to consider a source as an outlier in the fit of the color term and zero point
 
+    print(f'Processing filter {filter} with {len(science_paths)} science frames, {len(skyff_paths)} skyff frames and {len(bias_paths)} bias frames.')
+
     ccd_science = []
     wcs = []
     for path in science_paths:
@@ -98,10 +107,8 @@ def zp_estimation(global_path, filter):
         ccd_sci = ccdproc.gain_correct(ccd_sci, gain*u.electron/u.adu) #In e-
         ccd_science.append(ccd_sci)
     wcs_data = wcs[0].slice((slice(overscan_y1, overscan_y2), slice(overscan_x1, overscan_x2)))
-
-    master_bias = ccdproc.combine(bias_paths, unit=u.adu, method='median') #MASTER BIAS
-    bias = ccdproc.gain_correct(master_bias, gain*u.electron/u.adu) #In e-
-    bias = bias[overscan_y1:overscan_y2, overscan_x1:overscan_x2]
+    #to save time we create the master bias once and save it in a cache file and load it for the other filters
+    bias = get_master_bias(bias_paths=bias_paths, gain=gain,overscan=(overscan_y1, overscan_y2, overscan_x1, overscan_x2), cache_path=global_path + "calib/master_bias.fits")
 
     ccd_skyff = []
     for path in skyff_paths:
@@ -139,8 +146,9 @@ def zp_estimation(global_path, filter):
 
     #WE DETECT THE SOURCES FOR THE PHOTOMETRY
 
+    print(f'Detecting sources in the combined science image for filter {filter}...')
+
     #We load table 2 from Pancino 2022 which corresponds to Stetsons L98SA field (extension of Landolt's SA98 field) and contains the magnitudes of the stars in the field in different filters. 
-    cat_stetson = Table.read("stetson_cat_final.csv", format="csv")
     ra_deg = cat_stetson['RAJ2000_deg']
     dec_deg = cat_stetson['DEJ2000_deg']
     coords_cat = SkyCoord(ra_deg*u.degree, dec_deg*u.degree, frame='icrs')
@@ -186,6 +194,8 @@ def zp_estimation(global_path, filter):
     sources_matched = sources[idx[good]]
     sources_matched = sources_matched[np.argsort(idx[good])] #sort them by id
 
+    print(f'Found {len(sources_matched)} good matches between detected sources and catalog sources for filter {filter}, proceeding with photometry...')
+
     #PHOTOMETRY ON THE DETECTED SOURCES
     x, y = sources_matched['xcentroid'], sources_matched['ycentroid']
     aperture = CircularAperture([(xi,yi) for xi, yi in zip(x, y)], r=aper_radius)
@@ -225,6 +235,8 @@ def zp_estimation(global_path, filter):
     ins_mag_error = np.array((2.5 / np.log(10)) * (photometry['aperture_sum_bkgsub_error'].value / photometry['aperture_sum_bkgsub'].value))
 
     # WE ESTIMATE THE ZP
+
+    print(f'Estimating ZP and CT for filter {filter}...')
 
     #We load the needed filter mag and color from the Stetson catalog
     mag_cat = []
@@ -275,7 +287,6 @@ def zp_estimation(global_path, filter):
         delta_mag_sig = delta_mag_sig[mask]
         delta_mag_error_sig = delta_mag_error_sig[mask]
 
-
     zp, ct = popt
     zp_error, ct_error = np.sqrt(np.diag(pcov))
 
@@ -293,27 +304,103 @@ def zp_estimation(global_path, filter):
     ax.set_ylabel(' ',fontsize = 10)
     ax.set_xlabel(' ',fontsize = 10)
     ax2 = fig.add_subplot(1, 2, 2)
-    ax2.plot(color_cat_sig, 1*zp + ct*color_cat_sig-atm_ext, color='orange', label=f'ZP = {zp:.3f} +/- {zp_error:.3f} \nCT = {ct:.3f} +/- {ct_error:.3f}', zorder=2)
+    ax2.plot(color_cat, 1*zp + ct*color_cat-atm_ext, color='orange', label=f'ZP = {zp:.3f} +/- {zp_error:.3f} \nCT = {ct:.3f} +/- {ct_error:.3f}', zorder=2)
     ax2.errorbar(color_cat_sig, delta_mag_sig, yerr=delta_mag_error_sig, fmt='o', color='blue', elinewidth=1, capsize=2, zorder=5)
     ax2.errorbar(color_cat, delta_mag,yerr=delta_mag_error,fmt='o', color='red', elinewidth=1, capsize=2, zorder=3)
     for i, label in enumerate([i for i in range(len(delta_mag))]):
-        ax2.text(color_cat[i]+0.02, delta_mag[i]+0.02, label+1, fontsize=10, color='lightseagreen', clip_on=True, zorder=4)
+        ax2.text(color_cat[i]+0.02, delta_mag[i]+0.02, label+1, fontsize=10, color='black', clip_on=True, zorder=4)
     ax2.set_xlabel(f"{color_index[0]} - {color_index[1]} (mag)")
     ax2.set_ylabel(f"Catalog {filter} - Instrumental mag (mag)")
     plt.legend()
-    plt.show()
+    plt.savefig(global_path+'diag_plots'+f'/{filter}_zp_estimation.png', dpi=300)
 
     return zp, zp_error, ct, ct_error
 
+def load_shared(global_path):
+    with open(f'{global_path}config.yaml', 'r') as f:
+        config = yaml.safe_load(f)
 
-#MAIN: logic to estimate all the ZP for the 10 filters and to save the results in a file. 
+    cat_stetson = Table.read("stetson_cat_final.csv", format="csv")
+    return config, cat_stetson
+
+
+def get_master_bias(bias_paths, gain, overscan, cache_path):
+
+    if os.path.exists(cache_path):
+        return CCDData.read(cache_path, unit=u.electron)
+
+    lock_path = cache_path + ".lock"
+    while os.path.exists(lock_path):
+        time.sleep(1)
+
+    if not os.path.exists(cache_path):
+        open(lock_path, "w").close()
+
+        master_bias = ccdproc.combine(bias_paths, unit=u.adu, method='median')
+        master_bias = ccdproc.gain_correct(
+            master_bias, gain * u.electron / u.adu
+        )
+        master_bias = master_bias[
+            overscan[0]:overscan[1],
+            overscan[2]:overscan[3]
+        ]
+
+        master_bias.write(cache_path, overwrite=True)
+
+        os.remove(lock_path)
+
+    return CCDData.read(cache_path, unit=u.electron)
+
+
+
+#MAIN: logic to estimate all the ZP for the 10 filters and to save the results in a file.
+
+#loop
+# def main():
+#     global_path = '/home/victoriavd/xshooter_2026/' #MAYBE ADD IT AS USER INPUT
+#     filters = ['U', 'B', 'V', 'R', 'I', 'u_prime', 'g_prime', 'r_prime', 'i_prime', 'z_prime']
+#     table_results = Table(names=['filter', 'ZP', 'ZP_error', 'Color_term', 'Color_term_error'], dtype=['str', 'float', 'float', 'float', 'float'])
+#     config, cat_stetson = load_shared(global_path)
+#     for filter in filters:
+#         zp, zp_error, ct, ct_error = zp_estimation(global_path, filter, config, cat_stetson)
+#         table_results.add_row([filter, zp, zp_error, ct, ct_error])
+#     table_results.write(global_path+'zp_results.csv', format='csv', overwrite=True)
+
+#multiprocessing
 def main():
-    global_path = '/home/victoriavd/xshooter_2026/' #MAYBE ADD IT AS USER INPUT
-    filters = ['U', 'B', 'V', 'R', 'I', 'u_prime', 'g_prime', 'r_prime', 'i_prime', 'z_prime']
-    table_results = Table(names=['filter', 'ZP', 'ZP_error', 'Color_term', 'Color_term_error'], dtype=['str', 'float', 'float', 'float', 'float'])
-    for filter in filters:
-        zp, zp_error, ct, ct_error = zp_estimation(global_path, filter)
-        table_results.add_row([filter, zp, zp_error, ct, ct_error])
-    table_results.write(global_path+'zp_results.csv', format='csv', overwrite=True)
-if __name__ == "__main__":    
+    global_path = '/home/victoriavd/xshooter_2026/'
+    filters = ['U', 'B', 'V', 'R', 'I',
+               'u_prime', 'g_prime', 'r_prime', 'i_prime', 'z_prime']
+
+    config, cat_stetson = load_shared(global_path)
+
+    table_results = Table(
+        names=['filter', 'ZP', 'ZP_error', 'Color_term', 'Color_term_error'],
+        dtype=['str', 'float', 'float', 'float', 'float']
+    )
+
+    with ProcessPoolExecutor(max_workers=10) as executor:
+        futures = {
+            executor.submit(
+                zp_estimation,
+                global_path,
+                filt,
+                config,
+                cat_stetson
+            ): filt
+            for filt in filters
+        }
+
+        for future in as_completed(futures):
+            filt = futures[future]
+            zp, zp_error, ct, ct_error = future.result()
+            table_results.add_row([filt, zp, zp_error, ct, ct_error])
+
+    table_results.write(
+        global_path + 'zp_results.csv',
+        format='csv',
+        overwrite=True
+    )
+
+if __name__ == "__main__":
     main()
