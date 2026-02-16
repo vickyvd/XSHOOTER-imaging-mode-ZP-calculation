@@ -20,13 +20,14 @@ others:
   pix_scale: 0.1744 #in arcsec/pix
   readout_noise: 4.54 #in e- (the value from the header is smaller so we hardcode it)
   dither: 3 #arcsec
-  overscan_x: [27, 536] #x coordinates of the no overscan region (Overscan region: x = 1-26 & 537-562 and y = 1-15 & 527-528)
+  overscan_x: [27, 537] #x coordinates of the no overscan region (Overscan region: x = 1-26 & 537-562 and y = 1-15 & 527-528)
   overscan_y: [16, 527] #y coordinates of the no overscan region
   aper_radius: 8 #number of fwhm
   iner_annulus_radius: 11 #number of fwhm
   outer_annulus_radius: 15 #number of fwhm
   bin_width: 20 #pixel size of bins for histogram of shifts between detected and catalog sources
   good_dist: 5 #maximum distance in pixels to consider a detected source as a good match to a catalog source
+  outlier_thresh: 10 #chi threshold to consider a source as an outlier in the fit of the color term and zero point
   detect_thresh: #depends on the filter, it is the threshold for source detection in units of the background std
     U: 5
     B: 6

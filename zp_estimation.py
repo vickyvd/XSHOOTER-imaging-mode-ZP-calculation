@@ -86,6 +86,7 @@ def zp_estimation(global_path, filter):
     detect_thresh = config['others']['detect_thresh'][filter] #threshold for source detection in units of the background std
     readout_noise = config['others']['readout_noise'] #in e-
     exptime = ref_header[config['header_kwards']['exptime']]
+    outlier_thresh = config['others']['outlier_thresh'] #chi threshold to consider a source as an outlier in the fit of the color term and zero point
 
     ccd_science = []
     wcs = []
@@ -196,26 +197,22 @@ def zp_estimation(global_path, filter):
     #we estimate the background
     a_mask_b = annulus.to_mask(method='center')
 
-    mean_local =[]
     bkg_local = []
     std_bkg_local = []
 
     for mask in a_mask_b: 
         a_data_1d = mask.get_values(science_image_final)
-        mean, median, std = sigma_clipped_stats(a_data_1d, sigma = 4) 
+        mean, median, std = sigma_clipped_stats(a_data_1d, sigma = 3) 
         bkg_local.append(median)
         std_bkg_local.append(std)
-        mean_local.append(mean)
         
     bkg_local = np.array(bkg_local)
     std_bkg_local = np.array(std_bkg_local)
-    mean_local = np.array(mean_local)
-    mean_local, bkg_local, std_bkg_local
-
+    
     #aperture photometry and flux estimation
     photometry = aperture_photometry(science_image_final, aperture)
     photometry['aperture_sum_bkgsub'] = photometry['aperture_sum'].value - bkg_local * aperture.area
-    photometry['aperture_sum_bkgsub_error'] = np.sqrt(photometry['aperture_sum_bkgsub'].value + aperture.area*(mean_local + readout_noise**2)) 
+    photometry['aperture_sum_bkgsub_error'] = np.sqrt(photometry['aperture_sum_bkgsub'].value + aperture.area*(bkg_local + readout_noise**2))
     #we estimate the extinction using Patat 2011
     lambda_A = np.array(config['others']['lambda_A'])
     k_lambda = np.array(config['others']['k_lambda'])
@@ -272,9 +269,7 @@ def zp_estimation(global_path, filter):
         )
         resid = delta_mag_sig - model(color_cat_sig, *popt)
         chi = resid / delta_mag_error_sig
-        mask = np.abs(chi) < 10
-
-        print(resid, delta_mag_error_sig, chi)
+        mask = np.abs(chi) < outlier_thresh
 
         color_cat_sig = color_cat_sig[mask]
         delta_mag_sig = delta_mag_sig[mask]
@@ -286,23 +281,25 @@ def zp_estimation(global_path, filter):
 
     print(f'Results for filter {filter}: ZP = {zp:.3f} +/- {zp_error:.3f}, Color term = {ct:.3f} +/- {ct_error:.3f}')
 
-    fig, ax = plt.subplots(1, 2, figsize=(14, 5))
+    fig = plt.figure(figsize=(12, 5))
+    ax = fig.add_subplot(1, 2, 1, projection=wcs_data)
     norm = simple_norm(science_image_final, 'linear', percent=99)
-    im = ax[0].imshow(science_image_final, norm=norm, origin='lower', cmap='gray')
-    plt.colorbar(im, ax=ax[0], shrink=0.75, label='e-')
+    im = ax.imshow(science_image_final, norm=norm, origin='lower', cmap='gray')
+    plt.colorbar(im, ax=ax, shrink=0.75, label='e-')
     for i in range(len(sources_matched)):
-        ax[0].text(sources_matched['xcentroid'][i]+10, sources_matched['ycentroid'][i]+10, str(i+1), color='orange', fontsize=8)
-    aperture.plot(color='red', lw=1.5, alpha=0.5, ax =ax[0])
-    annulus.plot(color='blue', lw=1.5, alpha=0.5, ax=ax[0])
-    ax[0].set_ylabel(' ',fontsize = 10)
-    ax[0].set_xlabel(' ',fontsize = 10)
-    ax[1].plot(color_cat_sig, 1*zp + ct*color_cat_sig-atm_ext, color='orange', label=f'ZP = {zp:.3f} +/- {zp_error:.3f} \nCT = {ct:.3f} +/- {ct_error:.3f}', zorder=4)
-    ax[1].errorbar(color_cat_sig, delta_mag_sig, yerr=delta_mag_error_sig, fmt='o', color='blue', elinewidth=1, capsize=2, zorder=5)
-    ax[1].errorbar(color_cat, delta_mag,yerr=delta_mag_error,fmt='o', color='red', elinewidth=1, capsize=2)
+        ax.text(sources_matched['xcentroid'][i]+10, sources_matched['ycentroid'][i]+10, str(i+1), color='lightseagreen', fontsize=10)
+    aperture.plot(color='red', lw=1.5, alpha=0.5, ax =ax)
+    annulus.plot(color='blue', lw=1.5, alpha=0.5, ax=ax)
+    ax.set_ylabel(' ',fontsize = 10)
+    ax.set_xlabel(' ',fontsize = 10)
+    ax2 = fig.add_subplot(1, 2, 2)
+    ax2.plot(color_cat_sig, 1*zp + ct*color_cat_sig-atm_ext, color='orange', label=f'ZP = {zp:.3f} +/- {zp_error:.3f} \nCT = {ct:.3f} +/- {ct_error:.3f}', zorder=2)
+    ax2.errorbar(color_cat_sig, delta_mag_sig, yerr=delta_mag_error_sig, fmt='o', color='blue', elinewidth=1, capsize=2, zorder=5)
+    ax2.errorbar(color_cat, delta_mag,yerr=delta_mag_error,fmt='o', color='red', elinewidth=1, capsize=2, zorder=3)
     for i, label in enumerate([i for i in range(len(delta_mag))]):
-        ax[1].text(color_cat[i]+0.02, delta_mag[i]+0.02, label+1, fontsize=8, color='red', clip_on=True)
-    ax[1].set_xlabel(f"{color_index[0]} - {color_index[1]} (mag)")
-    ax[1].set_ylabel(f"Catalog {filter} - Instrumental mag (mag)")
+        ax2.text(color_cat[i]+0.02, delta_mag[i]+0.02, label+1, fontsize=10, color='lightseagreen', clip_on=True, zorder=4)
+    ax2.set_xlabel(f"{color_index[0]} - {color_index[1]} (mag)")
+    ax2.set_ylabel(f"Catalog {filter} - Instrumental mag (mag)")
     plt.legend()
     plt.show()
 
