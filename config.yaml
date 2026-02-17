@@ -27,7 +27,7 @@ others:
   outer_annulus_radius: 15 #number of fwhm
   bin_width: 20 #pixel size of bins for histogram of shifts between detected and catalog sources
   good_dist: 5 #maximum distance in pixels to consider a detected source as a good match to a catalog source
-  outlier_thresh: 10 #chi threshold to consider a source as an outlier in the fit of the color term and zero point
+  outlier_thresh: 2.5 #threshold to consider a source as an outlier in the fit of the color term and zero point
   detect_thresh: #depends on the filter, it is the threshold for source detection in units of the background std
     U: 5
     B: 6

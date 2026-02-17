@@ -184,6 +184,15 @@ def zp_estimation(global_path, filter, config, cat_stetson):
     dy_peak = dy[(dy >= dy_min) & (dy < dy_max)]
     dx_shift = np.median(dx_peak) #median within the peak bin in x
     dy_shift = np.median(dy_peak) #median within the peak bin in y
+    #in the ra and dec directions
+    ny, nx = science_image_final.shape
+    x0 = nx / 2
+    y0 = ny / 2
+    ra0, dec0 = wcs_data.wcs_pix2world(x0, y0, 0)
+    ra1, dec1 = wcs_data.wcs_pix2world(x0 + dx_shift, y0 + dy_shift, 0)
+    c0 = SkyCoord(ra0*u.deg, dec0*u.deg, frame="icrs")
+    c1 = SkyCoord(ra1*u.deg, dec1*u.deg, frame="icrs")
+    dra, ddec = c0.spherical_offsets_to(c1)
     #we apply the shift to the catalog coordinates to match them with the detected sources coordinates
     x_cat_shift = x_cat + dx_shift
     y_cat_shift = y_cat + dy_shift
@@ -280,8 +289,7 @@ def zp_estimation(global_path, filter, config, cat_stetson):
             absolute_sigma=True
         )
         resid = delta_mag_sig - model(color_cat_sig, *popt)
-        chi = resid / delta_mag_error_sig
-        mask = np.abs(chi) < outlier_thresh
+        mask = np.abs(resid) < outlier_thresh*np.std(resid)
 
         color_cat_sig = color_cat_sig[mask]
         delta_mag_sig = delta_mag_sig[mask]
@@ -314,7 +322,7 @@ def zp_estimation(global_path, filter, config, cat_stetson):
     plt.legend()
     plt.savefig(global_path+'diag_plots'+f'/{filter}_zp_estimation.png', dpi=300)
 
-    return zp, zp_error, ct, ct_error
+    return zp, zp_error, ct, ct_error, (dx_shift, dy_shift), (dra.to(u.arcsec).value, ddec.to(u.arcsec).value)
 
 def load_shared(global_path):
     with open(f'{global_path}config.yaml', 'r') as f:
@@ -379,6 +387,9 @@ def main():
         dtype=['str', 'float', 'float', 'float', 'float']
     )
 
+    xy_shifts = []
+    ra_dec_shifts = []
+
     with ProcessPoolExecutor(max_workers=10) as executor:
         futures = {
             executor.submit(
@@ -393,14 +404,25 @@ def main():
 
         for future in as_completed(futures):
             filt = futures[future]
-            zp, zp_error, ct, ct_error = future.result()
+            zp, zp_error, ct, ct_error, xy_shift, ra_dec_shift = future.result()
             table_results.add_row([filt, zp, zp_error, ct, ct_error])
+            xy_shifts.append(xy_shift)
+            ra_dec_shifts.append(ra_dec_shift)
 
     table_results.write(
         global_path + 'zp_results.csv',
         format='csv',
         overwrite=True
     )
+
+    xy_shifts = np.array(xy_shifts)
+    mean_dx = np.mean(xy_shifts[:, 0])
+    mean_dy = np.mean(xy_shifts[:, 1])
+    print(f'Mean shift between detected sources and catalog sources across all filters: dx = {mean_dx:.2f} pixels, dy = {mean_dy:.2f} pixels')
+    ra_dec_shifts = np.array(ra_dec_shifts)
+    mean_dra = np.mean(ra_dec_shifts[:, 0])
+    mean_ddec = np.mean(ra_dec_shifts[:, 1])
+    print(f'Mean shift in RA and Dec between detected sources and catalog sources across all filters: dra = {mean_dra:.2f}, ddec = {mean_ddec:.2f}')
 
 if __name__ == "__main__":
     main()
